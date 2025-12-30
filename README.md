@@ -1,4 +1,4 @@
-# Counter App
+# The Counter App
 
 A simple Python Flask application that increments and returns a counter value on each request.  
 The app is containerized with Docker and designed for local development and deployment.
