@@ -1,0 +1,61 @@
+name: Build and Push Docker image to AWS ECR
+
+on:
+  push:
+    branches:
+      - development
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Determine next version
+      id: version
+      run: |
+        git fetch --tags
+        LATEST_TAG=$(git tag -l 'v*' | sort -V | tail -n1)
+
+        if [ -z "$LATEST_TAG" ]; then
+          NEXT_TAG="v0.0.1"
+        else
+          NEXT_TAG=$(echo "$LATEST_TAG" | sed 's/v//' | awk -F. '{printf "v%d.%d.%d", $1, $2, $3+1}')
+        fi
+
+        echo "tag=$NEXT_TAG" >> $GITHUB_OUTPUT
+        echo "Next tag: $NEXT_TAG"
+
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: us-east-1
+
+    - name: Login to Amazon ECR
+      id: login-ecr
+      uses: aws-actions/amazon-ecr-login@v2
+
+    - name: Build Docker image
+      env:
+        ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        ECR_REPOSITORY: counter-app
+        IMAGE_TAG: ${{ steps.version.outputs.tag }}
+      run: |
+        docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
+        docker tag $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY:latest
+
+    - name: Push Docker image
+      env:
+        ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        ECR_REPOSITORY: counter-app
+        IMAGE_TAG: ${{ steps.version.outputs.tag }}
+      run: |
+        docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+        docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
+
