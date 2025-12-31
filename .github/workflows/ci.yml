@@ -1,61 +1,91 @@
-name: Build and Push Docker image to AWS ECR
+name: CI/CD Docker Pipeline
 
+# Run on pushes to dev or main
 on:
   push:
     branches:
       - development
+      - main
+  workflow_dispatch: # manual trigger
+
+# Allow Actions to create releases
+permissions:
+  contents: write
 
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
+    environment: ${{ github.ref == 'refs/heads/main' && 'production' || 'development' }}
 
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-      with:
-        fetch-depth: 0
+      # 1️⃣ Checkout code
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-    - name: Determine next version
-      id: version
-      run: |
-        git fetch --tags
-        LATEST_TAG=$(git tag -l 'v*' | sort -V | tail -n1)
+      # 2️⃣ Determine next version
+      - name: Determine Next Version
+        id: version
+        run: |
+          git fetch --tags
+          LATEST_TAG=$(git tag -l 'v*' | sort -V | tail -n1)
+          if [ -z "$LATEST_TAG" ]; then
+            NEXT_TAG="v0.0.1"
+          else
+            NEXT_TAG=$(echo "$LATEST_TAG" | sed 's/v//' | awk -F. '{printf "v%d.%d.%d", $1,$2,$3+1}')
+          fi
+          echo "tag=$NEXT_TAG" >> $GITHUB_OUTPUT
+          echo "Next version: $NEXT_TAG"
 
-        if [ -z "$LATEST_TAG" ]; then
-          NEXT_TAG="v0.0.1"
-        else
-          NEXT_TAG=$(echo "$LATEST_TAG" | sed 's/v//' | awk -F. '{printf "v%d.%d.%d", $1, $2, $3+1}')
-        fi
+      # 3️⃣ Configure AWS via OIDC (no static keys)
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v3
+        with:
+          role-to-assume: arn:aws:iam::970547342192:role/github-actions-oidc
+          aws-region: us-east-1
 
-        echo "tag=$NEXT_TAG" >> $GITHUB_OUTPUT
-        echo "Next tag: $NEXT_TAG"
+      # 4️⃣ Login to ECR
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
 
-    - name: Configure AWS credentials
-      uses: aws-actions/configure-aws-credentials@v4
-      with:
-        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-        aws-region: us-east-1
+      # 5️⃣ Ensure ECR repository exists
+      - name: Ensure ECR Repository Exists
+        run: |
+          aws ecr describe-repositories --repository-names counter-app || \
+          aws ecr create-repository --repository-name counter-app
 
-    - name: Login to Amazon ECR
-      id: login-ecr
-      uses: aws-actions/amazon-ecr-login@v2
+      # 6️⃣ Build Docker image
+      - name: Build Docker image
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          ECR_REPOSITORY: counter-app
+          IMAGE_TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
+          docker tag $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY:latest
 
-    - name: Build Docker image
-      env:
-        ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-        ECR_REPOSITORY: counter-app
-        IMAGE_TAG: ${{ steps.version.outputs.tag }}
-      run: |
-        docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
-        docker tag $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY:latest
+      # 7️⃣ Push Docker image
+      - name: Push Docker image to ECR
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          ECR_REPOSITORY: counter-app
+          IMAGE_TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
 
-    - name: Push Docker image
-      env:
-        ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-        ECR_REPOSITORY: counter-app
-        IMAGE_TAG: ${{ steps.version.outputs.tag }}
-      run: |
-        docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
-        docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
+      # 8️⃣ Create GitHub release (only on main)
+      - name: Create GitHub Release
+        if: github.ref == 'refs/heads/main'
+        id: create_release
+        uses: ncipollo/release-action@v1
+        with:
+          tag: ${{ steps.version.outputs.tag }}
+          name: Release ${{ steps.version.outputs.tag }}
+          generate_release_notes: true
+          draft: false
+          prerelease: false
+
 
