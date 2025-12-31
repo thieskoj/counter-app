@@ -108,9 +108,7 @@ jobs:
 
 ###########################################################
 ###  Docker image Snyk scan | If fails, drop the action ###
-###       Connected to my personal Snyk account         ###
-###     The code owner receives an email notification   ###
-### Possible to configure Slack notification if needed  ###
+
 ###########################################################
 
       - name: Scan Docker image with Snyk for vulnerabilities
@@ -118,6 +116,6 @@ jobs:
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
         with:
-          image: ${{ steps.login-ecr.outputs.registry }}/counter-app:${{ steps.version.outputs.tag }}
+          image: counter-app:${{ steps.version.outputs.tag }}
           args: --severity-threshold=high
         continue-on-error: false
