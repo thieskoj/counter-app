@@ -63,9 +63,12 @@ jobs:
           ECR_REPOSITORY: counter-app
           IMAGE_TAG: ${{ steps.version.outputs.tag }}
         run: |
-          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
-          docker tag $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY:latest
-
+         docker build \
+            -t counter-app:$IMAGE_TAG \
+            -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG \
+            -t $ECR_REGISTRY/$ECR_REPOSITORY:latest \
+            .     
+            
       # 7️⃣ Push Docker image
       - name: Push Docker image to ECR
         env:
@@ -106,10 +109,14 @@ jobs:
           git config --global user.name "github-actions"
           git config --global user.email "github-actions@github.com"
 
+
 ###########################################################
 ###  Docker image Snyk scan | If fails, drop the action ###
 
 ###########################################################
+
+      - name: Debug Docker images
+        run: docker images
 
       - name: Scan Docker image with Snyk for vulnerabilities
         uses: snyk/actions/docker@master
