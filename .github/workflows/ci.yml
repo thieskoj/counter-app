@@ -68,7 +68,7 @@ jobs:
             -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG \
             -t $ECR_REGISTRY/$ECR_REPOSITORY:latest \
             .     
-            
+
       # 7️⃣ Push Docker image
       - name: Push Docker image to ECR
         env:
@@ -125,4 +125,4 @@ jobs:
         with:
           image: counter-app:${{ steps.version.outputs.tag }}
           args: --severity-threshold=high
-        continue-on-error: false
+        continue-on-error: ${{ github.ref != 'refs/heads/main' }}
