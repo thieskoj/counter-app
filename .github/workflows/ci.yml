@@ -96,12 +96,7 @@ jobs:
 ################################################################
 
       - name: SonarCloud Scan
-        uses: SonarSource/sonarcloud-github-action@master
-        with:
-          args: >
-            -Dsonar.projectKey=kodjoazimevi_counter-app
-            -Dsonar.organization=kodjoazimevi-github
-            -Dsonar.host.url=https://sonarcloud.io
+        uses: SonarSource/sonarqube-scan-action@v6
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -126,4 +121,3 @@ jobs:
           image: ${{ steps.login-ecr.outputs.registry }}/counter-app:${{ steps.version.outputs.tag }}
           args: --severity-threshold=high
         continue-on-error: false
-        
