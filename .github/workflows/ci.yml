@@ -1,5 +1,9 @@
 name: CI/CD Docker Pipeline
 
+permissions:
+  contents: write
+  id-token: write
+  
 # Run on pushes to dev or main
 on:
   push:
