@@ -87,3 +87,43 @@ jobs:
           generate_release_notes: true
           draft: false
           prerelease: false
+
+################################################################
+###               SONAR CLOUD SCAN                           ###
+### Drops the build if any bugs or vulnerabilities are found.###
+###            Using the default quality gate.               ###
+###        Connected to my personal Sonar Cloud account      ###
+################################################################
+
+      - name: SonarCloud Scan
+        uses: SonarSource/sonarcloud-github-action@master
+        with:
+          args: >
+            -Dsonar.projectKey=kodjoazimevi_counter-app
+            -Dsonar.organization=kodjoazimevi-github
+            -Dsonar.host.url=https://sonarcloud.io
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up git for SonarCloud
+        run: |
+          git config --global user.name "github-actions"
+          git config --global user.email "github-actions@github.com"
+
+###########################################################
+###  Docker image Snyk scan | If fails, drop the action ###
+###       Connected to my personal Snyk account         ###
+###     The code owner receives an email notification   ###
+### Possible to configure Slack notification if needed  ###
+###########################################################
+
+      - name: Scan Docker image with Snyk for vulnerabilities
+        uses: snyk/actions/docker@master
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        with:
+          image: ${{ steps.login-ecr.outputs.registry }}/counter-app:${{ steps.version.outputs.tag }}
+          args: --severity-threshold=high
+        continue-on-error: false
+        
