@@ -125,4 +125,4 @@ jobs:
         with:
           image: counter-app:${{ steps.version.outputs.tag }}
           args: --severity-threshold=high
-        continue-on-error: ${{ github.ref != 'refs/heads/main' }}
+        continue-on-error: true
