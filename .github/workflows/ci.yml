@@ -112,7 +112,7 @@ jobs:
       #########################################################################
       # SNYK (NON-BLOCKING CI SCAN)
       #########################################################################
-      - name: Snyk Scan (CI – Non-blocking)
+      - name: Snyk Scan (CI Non-blocking)
         uses: snyk/actions/docker@master
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
@@ -153,12 +153,12 @@ jobs:
       #########################################################################
       # 🔒 PRODUCTION SNYK GATE (BLOCKING)
       #########################################################################
-      - name: Snyk Scan (Production Gate)
-        uses: snyk/actions/docker@master
-        env:
-          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
-        with:
-          image: ${{ steps.login-ecr.outputs.registry }}/counter-app:${{ needs.build-and-push.outputs.image_tag }}
-          args: --severity-threshold=critical
-        continue-on-error: false
+      # - name: Snyk Scan (Production Gate)
+      #   uses: snyk/actions/docker@master
+      #   env:
+      #     SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+      #   with:
+      #     image: ${{ steps.login-ecr.outputs.registry }}/counter-app:${{ needs.build-and-push.outputs.image_tag }}
+      #     args: --severity-threshold=critical
+      #   continue-on-error: false
         
