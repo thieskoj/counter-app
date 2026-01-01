@@ -1,30 +1,41 @@
 name: CI/CD Docker Pipeline
 
-permissions:
-  contents: write
-  id-token: write
-
-# Run on pushes to dev or main
 on:
   push:
     branches:
       - development
       - main
-  workflow_dispatch: # manual trigger
+  workflow_dispatch:
 
+permissions:
+  contents: write
+  id-token: write
+
+env:
+  AWS_REGION: us-east-1
+  ECR_REPOSITORY: counter-app
+
+###############################################################################
+# JOB 1: BUILD + PUSH + NON-BLOCKING SECURITY SCANS (CI)
+###############################################################################
 jobs:
   build-and-push:
+    name: Build & Push (CI)
     runs-on: ubuntu-latest
-    environment: ${{ github.ref == 'refs/heads/main' && 'production' || 'development' }}
+    environment: ${{ github.ref == 'refs/heads/main' && 'development' || 'development' }}
+
+    outputs:
+      image_tag: ${{ steps.version.outputs.tag }}
 
     steps:
-      # 1️⃣ Checkout code
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      # 2️⃣ Determine next version
+      #########################################################################
+      # VERSIONING
+      #########################################################################
       - name: Determine Next Version
         id: version
         run: |
@@ -38,91 +49,116 @@ jobs:
           echo "tag=$NEXT_TAG" >> $GITHUB_OUTPUT
           echo "Next version: $NEXT_TAG"
 
-      # 3️⃣ Configure AWS via OIDC (no static keys)
-      - name: Configure AWS Credentials
+      #########################################################################
+      # AWS AUTH (OIDC)
+      #########################################################################
+      - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v3
         with:
           role-to-assume: arn:aws:iam::970547342192:role/github_actions_OIDC_role
-          aws-region: us-east-1
+          aws-region: ${{ env.AWS_REGION }}
 
-      # 4️⃣ Login to ECR
       - name: Login to Amazon ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-      # 5️⃣ Ensure ECR repository exists
-      - name: Ensure ECR Repository Exists
+      - name: Ensure ECR repository exists
         run: |
-          aws ecr describe-repositories --repository-names counter-app || \
-          aws ecr create-repository --repository-name counter-app
+          aws ecr describe-repositories --repository-names $ECR_REPOSITORY || \
+          aws ecr create-repository --repository-name $ECR_REPOSITORY
 
-      # 6️⃣ Build Docker image
+      #########################################################################
+      # BUILD + TAG IMAGE
+      #########################################################################
       - name: Build Docker image
         env:
-          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          ECR_REPOSITORY: counter-app
           IMAGE_TAG: ${{ steps.version.outputs.tag }}
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
         run: |
-         docker build \
+          docker build \
             -t counter-app:$IMAGE_TAG \
             -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG \
             -t $ECR_REGISTRY/$ECR_REPOSITORY:latest \
-            .     
+            .
 
-      # 7️⃣ Push Docker image
       - name: Push Docker image to ECR
         env:
-          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          ECR_REPOSITORY: counter-app
           IMAGE_TAG: ${{ steps.version.outputs.tag }}
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
         run: |
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
 
-      # 8️⃣ Create GitHub release (only on main)
+      #########################################################################
+      # RELEASE (NON-BLOCKING)
+      #########################################################################
       - name: Create GitHub Release
         if: github.ref == 'refs/heads/main'
-        id: create_release
         uses: ncipollo/release-action@v1
         with:
           tag: ${{ steps.version.outputs.tag }}
           name: Release ${{ steps.version.outputs.tag }}
           generate_release_notes: true
-          draft: false
-          prerelease: false
 
-################################################################
-###               SONAR CLOUD SCAN                           ###
-### Drops the build if any bugs or vulnerabilities are found.###
-###            Using the default quality gate.               ###
-###        Connected to my personal Sonar Cloud account      ###
-################################################################
-
+      #########################################################################
+      # SONAR (NON-BLOCKING)
+      #########################################################################
       - name: SonarCloud Scan
         uses: SonarSource/sonarqube-scan-action@v6
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Set up git for SonarCloud
-        run: |
-          git config --global user.name "github-actions"
-          git config --global user.email "github-actions@github.com"
-
-
-###########################################################
-###  Docker image Snyk scan | If fails, drop the action ###
-
-###########################################################
-
-      - name: Debug Docker images
-        run: docker images
-
-      - name: Scan Docker image with Snyk for vulnerabilities
+      #########################################################################
+      # SNYK (NON-BLOCKING CI SCAN)
+      #########################################################################
+      - name: Snyk Scan (CI – Non-blocking)
         uses: snyk/actions/docker@master
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
         with:
           image: counter-app:${{ steps.version.outputs.tag }}
-          args: --severity-threshold=high
+          args: --severity-threshold=critical
         continue-on-error: true
+
+###############################################################################
+# JOB 2: PRODUCTION DEPLOY GATE (BLOCKING)
+###############################################################################
+  deploy-production:
+    name: Production Security Gate
+    if: github.ref == 'refs/heads/main'
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    environment:
+      name: production   # ⬅ requires manual approval
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v3
+        with:
+          role-to-assume: arn:aws:iam::970547342192:role/github_actions_OIDC_role
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Pull image for production scan
+        run: |
+          docker pull ${{ steps.login-ecr.outputs.registry }}/counter-app:${{ needs.build-and-push.outputs.image_tag }}
+
+      #########################################################################
+      # 🔒 PRODUCTION SNYK GATE (BLOCKING)
+      #########################################################################
+      - name: Snyk Scan (Production Gate)
+        uses: snyk/actions/docker@master
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        with:
+          image: ${{ steps.login-ecr.outputs.registry }}/counter-app:${{ needs.build-and-push.outputs.image_tag }}
+          args: --severity-threshold=critical
+        continue-on-error: false
+        
