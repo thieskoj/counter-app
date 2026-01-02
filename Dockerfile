@@ -1,49 +1,32 @@
-# syntax=docker/dockerfile:1
+# -------- BUILD STAGE --------
+FROM python:3.12-slim AS build
 
-# ARG for Python version
-ARG PYTHON_VERSION=3.12.2
-FROM python:${PYTHON_VERSION}-slim as base
-
-# Python best practices
-ENV PYTHONDONTWRITEBYTECODE=1
-ENV PYTHONUNBUFFERED=1
-
-# Set working directory
 WORKDIR /app
 
-# Create non-root user
-ARG UID=10001
-RUN adduser \
-    --disabled-password \
-    --gecos "" \
-    --home "/nonexistent" \
-    --shell "/sbin/nologin" \
-    --no-create-home \
-    --uid "${UID}" \
-    appuser
+# Install build dependencies only here
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    gcc \
+ && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements first for caching
 COPY requirements.txt .
+RUN pip install --no-cache-dir --upgrade pip \
+ && pip install --no-cache-dir -r requirements.txt
 
-# Install dependencies using cache mount for pip
-RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install --no-cache-dir -r requirements.txt
+# -------- RUNTIME STAGE --------
+FROM python:3.12-slim
 
-# Create data directory and give ownership to appuser
-RUN mkdir -p /data && chown appuser:appuser /data
+WORKDIR /app
 
-# Switch to non-root user
-USER appuser
+# Copy only what is needed at runtime
+COPY --from=build /usr/local/lib/python3.12 /usr/local/lib/python3.12
+COPY --from=build /usr/local/bin /usr/local/bin
 
-# Copy application source code
 COPY . .
 
-# Environment variable for counter file
-ENV COUNTER_FILE=/data/counter.txt
+# Security hardening
+RUN useradd -m appuser
+USER appuser
 
-# Expose Flask port
-EXPOSE 8080
-
-# Run Flask app using Gunicorn (production-ready)
-# The Flask app object must be named 'app' in counter-app.py
-CMD ["gunicorn", "counter-app:app", "--bind=0.0.0.0:8080", "--access-logfile", "-", "--error-logfile", "-", "--workers=4"]
+EXPOSE 8000
+CMD ["gunicorn", "app:app", "--bind=0.0.0.0:8000"]
