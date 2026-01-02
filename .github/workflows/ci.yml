@@ -186,6 +186,10 @@ jobs:
           echo "${{ secrets.EC2_PEM_KEY }}" > ec2.pem
           chmod 400 ec2.pem
 
+      - name: Test SSH connection
+        run: ssh -i ec2.pem -o StrictHostKeyChecking=no ubuntu@${{ secrets.EC2_HOST }} "echo 'SSH works!'"
+
+
       - name: Deploy to PROD EC2
         env:
           EC2_HOST: ${{ secrets.EC2_HOST }}
