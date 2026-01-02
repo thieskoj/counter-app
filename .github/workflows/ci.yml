@@ -101,7 +101,7 @@ jobs:
           generate_release_notes: true
 
       #########################################################################
-      # SONAR (NON-BLOCKING)
+      # SONAR SCAN (NON-BLOCKING)
       #########################################################################
       - name: SonarCloud Scan
         uses: SonarSource/sonarqube-scan-action@v6
@@ -120,6 +120,51 @@ jobs:
           image: counter-app:${{ steps.version.outputs.tag }}
           args: --severity-threshold=critical
         continue-on-error: true
+
+###########################################################
+###         PUSH IMAGE TO ECR AND DEPLOY TO EC2         ###
+###     Tag Docker image as "latest" and push to ECR    ###
+###               Deploy to EC2 using SSH               ###
+###########################################################
+
+      - name: Push Docker image to ECR and Deploy to EC2
+        env:
+         ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+         ECR_REPOSITORY: counter-app
+         IMAGE_TAG: ${{ steps.next_version.outputs.tag }}
+        run: |
+           docker tag $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY:latest
+           docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+            docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
+
+      - name: Deploy to EC2 via SSH
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          EC2_USER: ${{ secrets.EC2_USER }}
+          EC2_PEM_KEY: ${{ secrets.EC2_PEM_KEY }}
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          ECR_REPOSITORY: counter-app
+          IMAGE_TAG: ${{ needs.build-and-push.outputs.image_tag }}
+        run: |
+          echo "$EC2_PEM_KEY" > ec2.pem
+          chmod 400 ec2.pem
+
+          # SSH SCP COMMANDS
+
+          SSH_COMMANDS="ssh -i ec2.pem -o StrictHostKeyChecking=no $EC2_USER@$EC2_HOST"
+          SCP_COMMANDS="scp -i ec2.pem -o StrictHostKeyChecking=no"
+
+          # Login to docker registry
+
+          $SSH_COMMANDS "aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin $ECR_REGISTRY"
+          $SCP_COMMANDS docker-compose.yml $EC2_USER@$EC2_HOST:/home/ubuntu/docker
+
+          # Pull and run the new docker image
+          
+          $SSH_COMMANDS "cd /home/ubuntu/docker && docker pull $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG && docker composse -f docker-compose.yml up -d --force-recreate"
+
+          # CLEANUP
+          rm -f ec2.pem
 
 ###############################################################################
 # JOB 2: PRODUCTION DEPLOY GATE (BLOCKING)
@@ -161,47 +206,3 @@ jobs:
           image: ${{ steps.login-ecr.outputs.registry }}/counter-app:${{ needs.build-and-push.outputs.image_tag }}
           args: --severity-threshold=critical
         continue-on-error: false
-
-###########################################################
-###         PUSH IMAGE TO ECR AND DEPLOY TO EC2         ###
-###     Tag Docker image as "latest" and push to ECR    ###
-###               Deploy to EC2 using SSH               ###
-###########################################################
-
-      - name: Push Docker image to ECR and Deploy to EC2
-        env:
-         ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-         ECR_REPOSITORY: counter-app
-         IMAGE_TAG: ${{ needs.build-and-push.outputs.image_tag }}
-        run: |
-           docker tag counter-app:${{ needs.build-and-push.outputs.image_tag }} ${{ steps.login-ecr.outputs.registry }}/counter-app:latest
-           docker push ${{ steps.login-ecr.outputs.registry }}/counter-app:latest
-
-      - name: Deploy to EC2 via SSH
-        env:
-          EC2_HOST: ${{ secrets.EC2_HOST }}
-          EC2_USER: ${{ secrets.EC2_USER }}
-          EC2_PEM_KEY: ${{ secrets.EC2_PEM_KEY }}
-          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          ECR_REPOSITORY: counter-app
-          IMAGE_TAG: ${{ needs.build-and-push.outputs.image_tag }}
-        run: |
-          echo "$EC2_PEM_KEY" > ec2.pem
-          chmod 400 ec2.pem
-
-          # SSH SCP COMMANDS
-
-          SSH_COMMANDS="ssh -i ec2.pem -o StrictHostKeyChecking=no $EC2_USER@$EC2_HOST"
-          SCP_COMMANDS="scp -i ec2.pem -o StrictHostKeyChecking=no"
-
-          # Login to docker registry
-
-          $SSH_COMMANDS "aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin $ECR_REGISTRY"
-          $SCP_COMMANDS docker-compose.yml $EC2_USER@$EC2_HOST:/home/ubuntu/docker
-
-          # Pull and run the new docker image
-          
-          $SSH_COMMANDS "cd /home/ubuntu/docker && docker pull $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG && docker composse -f docker-compose.yml up -d --force-recreate"
-
-          # CLEANUP
-          rm -f ec2.pem
