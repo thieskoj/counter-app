@@ -112,7 +112,7 @@ jobs:
       #########################################################################
       # SNYK (NON-BLOCKING CI SCAN)
       #########################################################################
-      - name: Snyk Scan (CI – Non-blocking)
+      - name: Snyk Scan (CI Non-blocking)
         uses: snyk/actions/docker@master
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
