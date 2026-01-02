@@ -89,41 +89,6 @@ jobs:
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
 
-<<<<<<< HEAD
-=======
-      #########################################################################
-      # RELEASE (NON-BLOCKING)
-      #########################################################################
-      - name: Create GitHub Release
-        if: github.ref == 'refs/heads/main'
-        uses: ncipollo/release-action@v1
-        with:
-          tag: ${{ steps.version.outputs.tag }}
-          name: Release ${{ steps.version.outputs.tag }}
-          generate_release_notes: true
-
-      #########################################################################
-      # SONAR (NON-BLOCKING)
-      #########################################################################
-      - name: SonarCloud Scan
-        uses: SonarSource/sonarqube-scan-action@v6
-        env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      #########################################################################
-      # SNYK (NON-BLOCKING CI SCAN)
-      #########################################################################
-      - name: Snyk Scan (CI Non-blocking)
-        uses: snyk/actions/docker@master
-        env:
-          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
-        with:
-          image: counter-app:${{ steps.version.outputs.tag }}
-          args: --severity-threshold=critical
-        continue-on-error: true
-
->>>>>>> main
 ###############################################################################
 # JOB 2: AUTO DEPLOY TO DEVELOPMENT
 ###############################################################################
