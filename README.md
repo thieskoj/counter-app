@@ -155,14 +155,4 @@ License
 
 MIT License. See LICENSE
  for details.
-
- ```
-
 ---
-
-✅ This version highlights the CI/CD status, Docker readiness, security scan results, and makes your repo more professional-looking with badges.
-
-If you want, I can **also add a “Getting Started” section with a one-liner to deploy the dev environment using GitHub Actions** so newcomers can try the app immediately.  
-
-Do you want me to add that?
-```
