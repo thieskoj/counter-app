@@ -1,17 +1,12 @@
-version: '2.4'  # The last version of Docker Compose file format that directly supports mem_limit and cpus
+version: '3.9'
 services:
-  counter-app-service:
-    container_name: counter-app
+  counter-app:
     image: 970547342192.dkr.ecr.us-east-1.amazonaws.com/counter-app:latest
-    volumes:
-      - ./data:/data
+    container_name: counter-app
     ports:
       - "8080:8080"
+    volumes:
+      - ./data:/data
     restart: always
     mem_limit: 256M
     cpus: 0.5
-
-
-
-
-    
