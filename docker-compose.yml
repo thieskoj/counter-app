@@ -1,0 +1,12 @@
+version: '3.9'
+services:
+  counter-app:
+    image: 970547342192.dkr.ecr.us-east-1.amazonaws.com/counter-app:latest
+    container_name: counter-app
+    ports:
+      - "80:8080"
+    volumes:
+      - ./data:/data
+    restart: always
+    mem_limit: 256M
+    cpus: 0.5

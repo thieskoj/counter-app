@@ -5,6 +5,10 @@ on:
     branches:
       - development
       - main
+
+    paths-ignore:
+      - "README.md"
+      - "docs/**"
   workflow_dispatch:
 
 permissions:
@@ -14,15 +18,15 @@ permissions:
 env:
   AWS_REGION: us-east-1
   ECR_REPOSITORY: counter-app
+  ECR_REGISTRY: 970547342192.dkr.ecr.us-east-1.amazonaws.com
 
 ###############################################################################
-# JOB 1: BUILD + PUSH + NON-BLOCKING SECURITY SCANS (CI)
+# JOB 1: BUILD + PUSH (CI)
 ###############################################################################
 jobs:
   build-and-push:
-    name: Build & Push (CI)
+    name: Build & Push Image
     runs-on: ubuntu-latest
-    environment: ${{ github.ref == 'refs/heads/main' && 'development' || 'development' }}
 
     outputs:
       image_tag: ${{ steps.version.outputs.tag }}
@@ -47,10 +51,9 @@ jobs:
             NEXT_TAG=$(echo "$LATEST_TAG" | sed 's/v//' | awk -F. '{printf "v%d.%d.%d", $1,$2,$3+1}')
           fi
           echo "tag=$NEXT_TAG" >> $GITHUB_OUTPUT
-          echo "Next version: $NEXT_TAG"
 
       #########################################################################
-      # AWS AUTH (OIDC)
+      # AWS AUTH
       #########################################################################
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v3
@@ -68,15 +71,13 @@ jobs:
           aws ecr create-repository --repository-name $ECR_REPOSITORY
 
       #########################################################################
-      # BUILD + TAG IMAGE
+      # BUILD + PUSH
       #########################################################################
       - name: Build Docker image
         env:
           IMAGE_TAG: ${{ steps.version.outputs.tag }}
-          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
         run: |
           docker build \
-            -t counter-app:$IMAGE_TAG \
             -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG \
             -t $ECR_REGISTRY/$ECR_REPOSITORY:latest \
             .
@@ -84,58 +85,67 @@ jobs:
       - name: Push Docker image to ECR
         env:
           IMAGE_TAG: ${{ steps.version.outputs.tag }}
-          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
         run: |
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
 
-      #########################################################################
-      # RELEASE (NON-BLOCKING)
-      #########################################################################
-      - name: Create GitHub Release
-        if: github.ref == 'refs/heads/main'
-        uses: ncipollo/release-action@v1
-        with:
-          tag: ${{ steps.version.outputs.tag }}
-          name: Release ${{ steps.version.outputs.tag }}
-          generate_release_notes: true
-
-      #########################################################################
-      # SONAR (NON-BLOCKING)
-      #########################################################################
-      - name: SonarCloud Scan
-        uses: SonarSource/sonarqube-scan-action@v6
-        env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      #########################################################################
-      # SNYK (NON-BLOCKING CI SCAN)
-      #########################################################################
-      - name: Snyk Scan (CI Non-blocking)
-        uses: snyk/actions/docker@master
-        env:
-          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
-        with:
-          image: counter-app:${{ steps.version.outputs.tag }}
-          args: --severity-threshold=critical
-        continue-on-error: true
-
 ###############################################################################
-# JOB 2: PRODUCTION DEPLOY GATE (BLOCKING)
+# JOB 2: AUTO DEPLOY TO DEVELOPMENT
 ###############################################################################
-  deploy-production:
-    name: Production Security Gate
-    if: github.ref == 'refs/heads/main'
+  deploy-development:
+    name: Deploy to Development EC2
+    if: github.ref == 'refs/heads/development'
     needs: build-and-push
     runs-on: ubuntu-latest
-    environment:
-      name: production   # ⬅ requires manual approval
+
+    environment: development
+
+    env:
+      IMAGE_TAG: ${{ needs.build-and-push.outputs.image_tag }}
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Prepare SSH key
+        run: |
+          echo "${{ secrets.EC2_PEM_KEY }}" > ec2.pem
+          chmod 400 ec2.pem
+
+      - name: Deploy to DEV EC2
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          EC2_USER: ${{ secrets.EC2_USER }}
+        run: |
+          SSH="ssh -i ec2.pem -o StrictHostKeyChecking=no $EC2_USER@$EC2_HOST"
+          SCP="scp -i ec2.pem -o StrictHostKeyChecking=no"
+
+          $SCP docker-compose.yml $EC2_USER@$EC2_HOST:/home/ubuntu/docker-compose.yml
+
+          $SSH << EOF
+            aws ecr get-login-password --region us-east-1 \
+              | docker login --username AWS --password-stdin $ECR_REGISTRY
+
+            docker pull $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+            docker compose -f ~/docker-compose.yml up -d --force-recreate
+          EOF
+
+      - name: Cleanup SSH key
+        run: rm -f ec2.pem
+
+###############################################################################
+# JOB 3: PRODUCTION SECURITY GATE + MANUAL APPROVAL
+###############################################################################
+  deploy-production:
+    name: Production Approval + Security Gate
+    if: github.ref == 'refs/heads/main'
+    needs: build-and-push
+    runs-on: ubuntu-latest
+
+    environment:
+      name: production
+
+    steps:
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v3
         with:
@@ -148,17 +158,59 @@ jobs:
 
       - name: Pull image for production scan
         run: |
-          docker pull ${{ steps.login-ecr.outputs.registry }}/counter-app:${{ needs.build-and-push.outputs.image_tag }}
+          docker pull $ECR_REGISTRY/$ECR_REPOSITORY:${{ needs.build-and-push.outputs.image_tag }}
 
-      #########################################################################
-      # 🔒 PRODUCTION SNYK GATE (BLOCKING)
-      #########################################################################
       - name: Snyk Scan (Production Gate)
         uses: snyk/actions/docker@master
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
         with:
-          image: ${{ steps.login-ecr.outputs.registry }}/counter-app:${{ needs.build-and-push.outputs.image_tag }}
+          image: $ECR_REGISTRY/$ECR_REPOSITORY:${{ needs.build-and-push.outputs.image_tag }}
           args: --severity-threshold=critical
-        continue-on-error: false
-        
+
+###############################################################################
+# JOB 4: DEPLOY TO PRODUCTION EC2
+###############################################################################
+  deploy-ec2:
+    name: Deploy to Production EC2
+    needs: deploy-production
+    runs-on: ubuntu-latest
+
+    environment: production
+
+    env:
+      IMAGE_TAG: ${{ needs.build-and-push.outputs.image_tag }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Prepare SSH key
+        run: |
+          echo "${{ secrets.EC2_PEM_KEY }}" > ec2.pem
+          chmod 400 ec2.pem
+
+      - name: Test SSH connection
+        run: ssh -i ec2.pem -o StrictHostKeyChecking=no ubuntu@${{ secrets.EC2_HOST }} "echo 'SSH works!'"
+
+
+      - name: Deploy to PROD EC2
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          EC2_USER: ${{ secrets.EC2_USER }}
+        run: |
+          SSH="ssh -i ec2.pem -o StrictHostKeyChecking=no $EC2_USER@$EC2_HOST"
+          SCP="scp -i ec2.pem -o StrictHostKeyChecking=no"
+
+          $SCP docker-compose.yml $EC2_USER@$EC2_HOST:/home/ubuntu/docker-compose.yml
+
+          $SSH << EOF
+            aws ecr get-login-password --region us-east-1 \
+              | docker login --username AWS --password-stdin $ECR_REGISTRY
+
+            docker pull $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+            docker compose -f ~/docker-compose.yml up -d --force-recreate
+          EOF
+
+      - name: Cleanup SSH key
+        run: rm -f ec2.pem
