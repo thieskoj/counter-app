@@ -82,7 +82,7 @@ pip install -r requirements.txt
 
 # Run locally
 export COUNTER_FILE=./data/counter.txt
-python counter-app.py
+python counter_app.py
 
 # Access at http://localhost:8080
 ```
@@ -92,12 +92,12 @@ http://localhost:8080
 
 Docker
 Build and run locally:
-```bash
+```
 docker build -t counter-app:dev .
 docker run -d -p 8080:8080 -v $(pwd)/data:/data counter-app:dev
 ```
 Using Docker Compose:
-```bash 
+```
    docker-compose up -d
 ```
 
