@@ -13,7 +13,9 @@ permissions:
 
 env:
   AWS_REGION: us-east-1
+  AWS_ACCOUNT_ID: 970547342192
   ECR_REPOSITORY: counter-app
+  ECR_REGISTRY: 970547342192.dkr.ecr.us-east-1.amazonaws.com
 
 ###############################################################################
 # JOB 1: BUILD + PUSH + NON-BLOCKING SECURITY SCANS (CI)
@@ -22,12 +24,12 @@ jobs:
   build-and-push:
     name: Build & Push (CI)
     runs-on: ubuntu-latest
-    environment: ${{ github.ref == 'refs/heads/main' && 'development' || 'development' }}
 
     outputs:
       image_tag: ${{ steps.version.outputs.tag }}
 
     steps:
+      # 1️⃣ Checkout
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
@@ -59,7 +61,6 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Login to Amazon ECR
-        id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
       - name: Ensure ECR repository exists
@@ -68,15 +69,13 @@ jobs:
           aws ecr create-repository --repository-name $ECR_REPOSITORY
 
       #########################################################################
-      # BUILD + TAG IMAGE
+      # BUILD + TAG + PUSH
       #########################################################################
       - name: Build Docker image
         env:
           IMAGE_TAG: ${{ steps.version.outputs.tag }}
-          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
         run: |
           docker build \
-            -t counter-app:$IMAGE_TAG \
             -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG \
             -t $ECR_REGISTRY/$ECR_REPOSITORY:latest \
             .
@@ -84,13 +83,54 @@ jobs:
       - name: Push Docker image to ECR
         env:
           IMAGE_TAG: ${{ steps.version.outputs.tag }}
-          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
         run: |
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
 
       #########################################################################
-      # RELEASE (NON-BLOCKING)
+      # SANITY CHECK (FAIL FAST)
+      #########################################################################
+      - name: Sanity check image tag
+        env:
+          IMAGE_TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          if [ -z "$IMAGE_TAG" ]; then
+            echo "❌ IMAGE_TAG is empty. Aborting."
+            exit 1
+          fi
+          echo "✅ Image tag is $IMAGE_TAG"
+
+      #########################################################################
+      # VERIFY IMAGE EXISTS IN ECR
+      #########################################################################
+      - name: Verify image exists in ECR
+        env:
+          IMAGE_TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          aws ecr describe-images \
+            --repository-name $ECR_REPOSITORY \
+            --image-ids imageTag=$IMAGE_TAG
+
+      #########################################################################
+      # NON-BLOCKING SECURITY SCANS (CI)
+      #########################################################################
+      - name: SonarCloud Scan (CI)
+        uses: SonarSource/sonarqube-scan-action@v6
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Snyk Scan (CI non-blocking)
+        uses: snyk/actions/docker@master
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        with:
+          image: $ECR_REGISTRY/$ECR_REPOSITORY:${{ steps.version.outputs.tag }}
+          args: --severity-threshold=critical
+        continue-on-error: true
+
+      #########################################################################
+      # RELEASE (ONLY ON MAIN)
       #########################################################################
       - name: Create GitHub Release
         if: github.ref == 'refs/heads/main'
@@ -100,82 +140,20 @@ jobs:
           name: Release ${{ steps.version.outputs.tag }}
           generate_release_notes: true
 
-      #########################################################################
-      # SONAR SCAN (NON-BLOCKING)
-      #########################################################################
-      - name: SonarCloud Scan
-        uses: SonarSource/sonarqube-scan-action@v6
-        env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      #########################################################################
-      # SNYK (NON-BLOCKING CI SCAN)
-      #########################################################################
-      - name: Snyk Scan (CI Non-blocking)
-        uses: snyk/actions/docker@master
-        env:
-          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
-        with:
-          image: counter-app:${{ steps.version.outputs.tag }}
-          args: --severity-threshold=critical
-        continue-on-error: true
-
-###########################################################
-###         PUSH IMAGE TO ECR AND DEPLOY TO EC2         ###
-###     Tag Docker image as "latest" and push to ECR    ###
-###               Deploy to EC2 using SSH               ###
-###########################################################
-
-      - name: Push Docker image to ECR and Deploy to EC2
-        env:
-         ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-         ECR_REPOSITORY: counter-app
-         IMAGE_TAG: ${{ steps.next_version.outputs.tag }}
-        run: |
-           docker tag $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY:latest
-           docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
-            docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
-
-      - name: Deploy to EC2 via SSH
-        env:
-          EC2_HOST: ${{ secrets.EC2_HOST }}
-          EC2_USER: ${{ secrets.EC2_USER }}
-          EC2_PEM_KEY: ${{ secrets.EC2_PEM_KEY }}
-          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          ECR_REPOSITORY: counter-app
-          IMAGE_TAG: ${{ needs.build-and-push.outputs.image_tag }}
-        run: |
-          echo "$EC2_PEM_KEY" > ec2.pem
-          chmod 400 ec2.pem
-
-          # SSH SCP COMMANDS
-
-          SSH_COMMANDS="ssh -i ec2.pem -o StrictHostKeyChecking=no $EC2_USER@$EC2_HOST"
-          SCP_COMMANDS="scp -i ec2.pem -o StrictHostKeyChecking=no"
-
-          # Login to docker registry
-
-          $SSH_COMMANDS "aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin $ECR_REGISTRY"
-          $SCP_COMMANDS docker-compose.yml $EC2_USER@$EC2_HOST:/home/ubuntu/docker
-
-          # Pull and run the new docker image
-          
-          $SSH_COMMANDS "cd /home/ubuntu/docker && docker pull $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG && docker composse -f docker-compose.yml up -d --force-recreate"
-
-          # CLEANUP
-          rm -f ec2.pem
-
 ###############################################################################
-# JOB 2: PRODUCTION DEPLOY GATE (BLOCKING)
+# JOB 2: PRODUCTION SECURITY GATE (BLOCKING + MANUAL APPROVAL)
 ###############################################################################
   deploy-production:
     name: Production Security Gate
     if: github.ref == 'refs/heads/main'
     needs: build-and-push
     runs-on: ubuntu-latest
+
     environment:
       name: production   # ⬅ requires manual approval
+
+    env:
+      IMAGE_TAG: ${{ needs.build-and-push.outputs.image_tag }}
 
     steps:
       - name: Checkout repository
@@ -188,21 +166,31 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Login to Amazon ECR
-        id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
+
+      #########################################################################
+      # SANITY CHECK (PRODUCTION)
+      #########################################################################
+      - name: Sanity check production image reference
+        run: |
+          if [ -z "$IMAGE_TAG" ]; then
+            echo "❌ IMAGE_TAG is empty"
+            exit 1
+          fi
+          echo "✅ Scanning $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
 
       - name: Pull image for production scan
         run: |
-          docker pull ${{ steps.login-ecr.outputs.registry }}/counter-app:${{ needs.build-and-push.outputs.image_tag }}
+          docker pull $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
 
-########################################################
-# 🔒 PRODUCTION SNYK GATE (BLOCKING).               ####
-########################################################
-      - name: Snyk Scan (Production Gate)
+      #########################################################################
+      # 🔒 BLOCKING PRODUCTION SNYK GATE
+      #########################################################################
+      - name: Snyk Scan (Production blocking)
         uses: snyk/actions/docker@master
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
         with:
-          image: ${{ steps.login-ecr.outputs.registry }}/counter-app:${{ needs.build-and-push.outputs.image_tag }}
+          image: $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
           args: --severity-threshold=critical
         continue-on-error: false
