@@ -4,7 +4,7 @@ services:
     image: 970547342192.dkr.ecr.us-east-1.amazonaws.com/counter-app:latest
     container_name: counter-app
     ports:
-      - "8080:8080"
+      - "80:8080"
     volumes:
       - ./data:/data
     restart: always
