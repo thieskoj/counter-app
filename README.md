@@ -157,3 +157,5 @@ License
 MIT License. See LICENSE
  for details.
 ---
+
+Reference: https://medium.com/devops-technical-notes-and-manuals/devops-example-project-for-your-resume-198e34d874b4
