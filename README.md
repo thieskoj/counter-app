@@ -97,7 +97,8 @@ docker build -t counter-app:dev .
 docker run -d -p 8080:8080 -v $(pwd)/data:/data counter-app:dev
 ```
 Using Docker Compose:
-```bash docker-compose up -d
+```bash 
+   docker-compose up -d
 ```
 
 App available at:
@@ -119,15 +120,20 @@ Container runs with persistent volume /data
 
 Public IP + mapped port exposes the app in the browser
 
-Environment Variables
-Name	Description
-COUNTER_FILE	Path to persistent counter file
-EC2_HOST	EC2 public IP for deployment
-EC2_USER	SSH user (e.g., ubuntu)
-EC2_PEM_KEY	SSH private key
-AWS_REGION	AWS region for ECR and OIDC
-SNYK_TOKEN	Token for Snyk security scanning
-SONAR_TOKEN	Token for SonarCloud scanning
+
+## Environment Variables
+
+| Name           | Description                                   |
+|----------------|-----------------------------------------------|
+| `COUNTER_FILE` | Path to persistent counter file               |
+| `EC2_HOST`     | EC2 public IP for deployment                  |
+| `EC2_USER`     | SSH user (e.g., ubuntu)                       |
+| `EC2_PEM_KEY`  | SSH private key                               |
+| `AWS_REGION`   | AWS region for ECR and OIDC                   |
+| `SNYK_TOKEN`   | Token for Snyk security scanning              |
+| `SONAR_TOKEN`  | Token for SonarCloud scanning                 |
+
+
 CI/CD Pipeline
 
 Automatic semantic versioning (v0.0.X)

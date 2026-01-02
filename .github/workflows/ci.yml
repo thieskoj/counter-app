@@ -5,6 +5,10 @@ on:
     branches:
       - development
       - main
+
+    paths-ignore:
+      - "README.md"
+      - "docs/**"
   workflow_dispatch:
 
 permissions:
