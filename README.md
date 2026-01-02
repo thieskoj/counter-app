@@ -88,18 +88,18 @@ python counter_app.py
 ```
 http://localhost:8080
 
-```
-
 Docker
 Build and run locally:
+
 ```
 docker build -t counter-app:dev .
 docker run -d -p 8080:8080 -v $(pwd)/data:/data counter-app:dev
-```
+
 Using Docker Compose:
+
 ```
    docker-compose up -d
-```
+
 
 App available at:
 
